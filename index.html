@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>排序演算法互動實驗室</title>
+    <!-- 引入 Tailwind CSS 進行樣式渲染 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 React 核心庫 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- 引入 Babel 用於解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 引入 Lucide 圖示庫 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-8px); }
+            75% { transform: translateX(8px); }
+        }
+        .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        /**
+         * 修正後的 Icon 組件
+         * 使用 lucide.createIcons 直接處理 DOM 注入，避免 API 方法缺失問題
+         */
+        const Icon = ({ name, className, size = 24 }) => {
+            const iconRef = useRef(null);
+            
+            useEffect(() => {
+                if (iconRef.current && window.lucide) {
+                    // 清空內容
+                    iconRef.current.innerHTML = '';
+                    // 建立一個臨時的 i 標籤供 Lucide 渲染
+                    const i = document.createElement('i');
+                    // 將 kebab-case 轉換為 Lucide 屬性格式
+                    const attrName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    i.setAttribute('data-lucide', attrName);
+                    i.style.width = `${size}px`;
+                    i.style.height = `${size}px`;
+                    iconRef.current.appendChild(i);
+                    
+                    // 調用 Lucide 的渲染方法
+                    window.lucide.createIcons({
+                        attrs: {
+                            'stroke-width': 2,
+                            width: size,
+                            height: size
+                        },
+                        nameAttr: 'data-lucide',
+                        icons: window.lucide.icons
+                    });
+                }
+            }, [name, size]);
+
+            return <span ref={iconRef} className={`inline-flex items-center justify-center leading-none ${className}`} style={{ width: size, height: size }}></span>;
+        };
+
+        const App = () => {
+            const [numbers, setNumbers] = useState([]);
+            const [algorithm, setAlgorithm] = useState('bubble'); 
+            const [step, setStep] = useState(0);
+            const [subStep, setSubStep] = useState(0); 
+            const [highlightIndices, setHighlightIndices] = useState([]);
+            const [sortedIndices, setSortedIndices] = useState([]);
+            const [message, setMessage] = useState('');
+            const [errorMsg, setErrorMsg] = useState('');
+            const [isComplete, setIsComplete] = useState(false);
+            const [tempValue, setTempValue] = useState(null); 
+            const [shakingIdx, setShakingIdx] = useState(null);
+            
+            const [isChallengeMode, setIsChallengeMode] = useState(false);
+            const [startTime, setStartTime] = useState(null);
+            const [elapsedTime, setElapsedTime] = useState(0);
+            const [bestScores, setBestScores] = useState({ bubble: null, selection: null, insertion: null });
+            const timerRef = useRef(null);
+
+            const initGame = () => {
+                const size = 6;
+                const min = 5;
+                const max = 50;
+                const stepRange = Math.floor((max - min) / size);
+                let baseNums = Array.from({ length: size }, (_, i) => min + (i * stepRange) + Math.floor(Math.random() * stepRange));
+                for (let i = baseNums.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [baseNums[i], baseNums[j]] = [baseNums[j], baseNums[i]];
+                }
+                const newNums = baseNums;
+                setNumbers(newNums);
+                setStep(0);
+                setSubStep(0);
+                setHighlightIndices([]);
+                setSortedIndices([]);
+                setIsComplete(false);
+                setTempValue(null);
+                setElapsedTime(0);
+                setStartTime(null);
+                setErrorMsg('');
+                if (timerRef.current) clearInterval(timerRef.current);
+                updateInstruction(algorithm, 0, 0, newNums, [], null, true);
+            };
+
+            useEffect(() => { initGame(); }, [algorithm]);
+
+            const startTimer = () => {
+                if (!startTime && isChallengeMode) {
+                    const now = Date.now();
+                    setStartTime(now);
+                    timerRef.current = setInterval(() => {
+                        setElapsedTime(Math.floor((Date.now() - now) / 1000));
+                    }, 1000);
+                }
+            };
+
+            const triggerError = (idx, msg) => {
+                setShakingIdx(idx);
+                setErrorMsg(msg);
+                setTimeout(() => { setShakingIdx(null); setErrorMsg(''); }, 1000);
+            };
+
+            const updateInstruction = (algo, s, ss, currentNums, currentSorted, temp = null, isFirstStep = false) => {
+                if (isChallengeMode && !isFirstStep) {
+                    setMessage("【競賽中】：請憑記憶與邏輯完成剩餘排序步驟！");
+                    setHighlightIndices([]);
+                    return;
+                }
+                if (algo === 'bubble') {
+                    const limit = currentNums.length - 1 - currentSorted.length;
+                    const j = s % limit;
+                    setMessage(`【提示】：比較位置 ${j} 與 ${j + 1}。請點擊「較大」的數字進行排序。`);
+                    setHighlightIndices([j, j + 1]);
+                } else if (algo === 'selection') {
+                    const i = currentSorted.length;
+                    if (ss === 0) {
+                        setMessage(`【提示】：請先點擊位置 ${i} 的方塊，準備進行交換。`);
+                        setHighlightIndices([i]);
+                    } else {
+                        const remainingNums = currentNums.slice(i);
+                        const minVal = Math.min(...remainingNums);
+                        const minIdx = currentNums.indexOf(minVal, i);
+                        setMessage(`【尋找】：請點擊後面數列中「最小」的數字 (${minVal}) 來與位置 ${i} 交換。`);
+                        setHighlightIndices([i, minIdx]);
+                    }
+                } else if (algo === 'insertion') {
+                    const i = currentSorted.length === 0 ? 1 : currentSorted.length;
+                    if (temp === null) {
+                        setMessage(`【提取】：請點擊位置 ${i} 的數字 (${currentNums[i]}) 將其「拔出」暫存。`);
+                        setHighlightIndices([i]);
+                    } else {
+                        setMessage(`【移動】：若左側數字比 ${temp} 大，點擊它向右移；若位置正確，點擊空位放回。`);
+                    }
+                }
+            };
+
+            const handleBlockClick = (index) => {
+                if (isComplete || errorMsg) return;
+                startTimer();
+                if (algorithm === 'bubble') handleBubble(index);
+                else if (algorithm === 'selection') handleSelection(index);
+                else if (algorithm === 'insertion') handleInsertion(index);
+            };
+
+            const handleBubble = (index) => {
+                const limit = numbers.length - 1 - sortedIndices.length;
+                const j = step % limit;
+                if (index !== j && index !== j + 1) return;
+                const leftVal = numbers[j];
+                const rightVal = numbers[j + 1];
+                const maxVal = Math.max(leftVal, rightVal);
+                if (numbers[index] !== maxVal) {
+                    triggerError(index, "選錯囉！氣泡排序要關注較大的數字。");
+                    return;
+                }
+                const newNums = [...numbers];
+                if (leftVal > rightVal) {
+                    [newNums[j], newNums[j + 1]] = [newNums[j + 1], newNums[j]];
+                    setNumbers(newNums);
+                }
+                const nextStep = step + 1;
+                if (nextStep >= limit) {
+                    const newSorted = [...sortedIndices, numbers.length - 1 - sortedIndices.length];
+                    setSortedIndices(newSorted);
+                    setStep(0);
+                    if (newSorted.length === numbers.length - 1) {
+                        setIsComplete(true);
+                        setSortedIndices([0, 1, 2, 3, 4, 5]);
+                        setMessage(`恭喜完成！總耗時：${elapsedTime} 秒。`);
+                    } else {
+                        updateInstruction('bubble', 0, 0, newNums, newSorted, null, false);
+                    }
+                } else {
+                    setStep(nextStep);
+                    updateInstruction('bubble', nextStep, 0, newNums, sortedIndices, null, false);
+                }
+            };
+
+            const handleSelection = (index) => {
+                const i = sortedIndices.length;
+                const remaining = numbers.slice(i);
+                const minVal = Math.min(...remaining);
+                const minIdx = numbers.indexOf(minVal, i);
+                if (subStep === 0) {
+                    if (index === i) {
+                        setSubStep(1);
+                        updateInstruction('selection', 0, 1, numbers, sortedIndices, null, false);
+                    } else { triggerError(index, `請先點擊目標位置 ${i}。`); }
+                } else {
+                    if (index === minIdx) {
+                        const newNums = [...numbers];
+                        [newNums[i], newNums[minIdx]] = [newNums[minIdx], newNums[i]];
+                        setNumbers(newNums);
+                        const newSorted = [...sortedIndices, i];
+                        setSortedIndices(newSorted);
+                        setSubStep(0);
+                        if (newSorted.length >= numbers.length - 1) {
+                            setIsComplete(true);
+                            setSortedIndices([0, 1, 2, 3, 4, 5]);
+                            setMessage(`恭喜完成！總耗時：${elapsedTime} 秒。`);
+                        } else { updateInstruction('selection', 0, 0, newNums, newSorted, null, false); }
+                    } else { triggerError(index, "這不是剩下的數字中最小的喔！"); }
+                }
+            };
+
+            const handleInsertion = (index) => {
+                const i = sortedIndices.length === 0 ? 1 : sortedIndices.length;
+                if (tempValue === null) {
+                    if (index === i) {
+                        const val = numbers[i];
+                        setTempValue(val);
+                        const newNums = [...numbers];
+                        newNums[i] = null;
+                        setNumbers(newNums);
+                        updateInstruction('insertion', 0, 1, newNums, sortedIndices, val, false);
+                    } else { triggerError(index, `請先拔出第 ${i} 個數字。`); }
+                } else {
+                    const nullIdx = numbers.indexOf(null);
+                    if (index === nullIdx - 1) {
+                        if (numbers[index] > tempValue) {
+                            const newNums = [...numbers];
+                            newNums[nullIdx] = newNums[index];
+                            newNums[index] = null;
+                            setNumbers(newNums);
+                            updateInstruction('insertion', 0, 1, newNums, sortedIndices, tempValue, false);
+                        } else { triggerError(index, "不需右移。"); }
+                    } else if (index === nullIdx) {
+                        if (nullIdx === 0 || numbers[nullIdx - 1] <= tempValue) {
+                            const newNums = [...numbers];
+                            newNums[nullIdx] = tempValue;
+                            setNumbers(newNums);
+                            setTempValue(null);
+                            const nextSortedLen = i + 1;
+                            const newSorted = Array.from({ length: nextSortedLen }, (_, k) => k);
+                            setSortedIndices(newSorted);
+                            if (nextSortedLen === numbers.length) {
+                                setIsComplete(true);
+                                setMessage(`恭喜完成！總耗時：${elapsedTime} 秒。`);
+                            } else { updateInstruction('insertion', 0, 0, newNums, newSorted, null, false); }
+                        } else { triggerError(index, "左邊還有大數！"); }
+                    }
+                }
+            };
+
+            useEffect(() => {
+                if (isComplete && timerRef.current) {
+                    clearInterval(timerRef.current);
+                    if (isChallengeMode) {
+                        setBestScores(prev => ({
+                            ...prev,
+                            [algorithm]: prev[algorithm] === null ? elapsedTime : Math.min(prev[algorithm], elapsedTime)
+                        }));
+                    }
+                }
+            }, [isComplete]);
+
+            return (
+                <div className={`min-h-screen p-4 md:p-8 transition-all duration-500 ${isChallengeMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
+                    <div className="max-w-4xl mx-auto">
+                        <header className="text-center mb-6">
+                            <div className="flex items-center justify-center gap-2 mb-2">
+                                <h1 className={`text-3xl font-bold ${isChallengeMode ? 'text-amber-400' : 'text-indigo-700'}`}>排序競賽實驗室</h1>
+                                {isChallengeMode && <Icon name="Swords" className="text-amber-400 animate-pulse" />}
+                            </div>
+                            <p className="opacity-70">正確操作演算法，挑戰最快速度！</p>
+                        </header>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-center">
+                            <div className={`p-3 rounded-xl border ${isChallengeMode ? 'bg-slate-800 border-amber-500/30' : 'bg-white shadow-sm'}`}>
+                                <div className="text-xs text-slate-400 uppercase">時間</div>
+                                <div className="text-xl font-mono font-bold text-amber-500">{elapsedTime}s</div>
+                            </div>
+                            <div className={`p-3 rounded-xl border ${isChallengeMode ? 'bg-slate-800 border-amber-500/30' : 'bg-white shadow-sm'}`}>
+                                <div className="text-xs text-slate-400 uppercase">最佳紀錄</div>
+                                <div className="text-xl font-mono font-bold text-indigo-400">{bestScores[algorithm] || '--'}s</div>
+                            </div>
+                            <button onClick={() => { setIsChallengeMode(!isChallengeMode); initGame(); }} className={`col-span-2 py-3 rounded-xl font-bold transition-all shadow-lg ${isChallengeMode ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-white'}`}>
+                                {isChallengeMode ? "切換至 學習模式 (全提示)" : "🔥 開啟 競賽模式 (首步提示)"}
+                            </button>
+                        </div>
+
+                        <div className="flex justify-center gap-2 mb-8">
+                            {['bubble', 'selection', 'insertion'].map((a) => (
+                                <button key={a} onClick={() => setAlgorithm(a)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${algorithm === a ? 'bg-indigo-600 text-white scale-105 shadow-md' : 'bg-slate-200 text-slate-600'}`}>
+                                    {a === 'bubble' ? '氣泡' : a === 'selection' ? '選擇' : '插入'}排序
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className={`rounded-2xl shadow-2xl p-6 md:p-10 mb-6 border-t-8 transition-all ${isChallengeMode ? 'bg-slate-800 border-amber-500' : 'bg-white border-indigo-500'}`}>
+                            <div className={`flex items-center gap-3 p-4 mb-8 rounded-lg transition-all ${errorMsg ? 'bg-red-100 border-red-500 text-red-700 animate-bounce' : isChallengeMode ? 'bg-slate-700 text-slate-200' : 'bg-indigo-50 text-indigo-900'}`}>
+                                <Icon name={errorMsg ? "AlertCircle" : "Info"} size={20} />
+                                <p className="font-bold ml-2">{errorMsg || message}</p>
+                            </div>
+
+                            <div className="flex flex-col items-center gap-12 justify-center h-64">
+                                <div className="flex gap-4 items-end">
+                                    {numbers.map((num, idx) => (
+                                        <div key={idx} className={`flex flex-col items-center gap-3 transition-transform ${shakingIdx === idx ? 'animate-shake' : ''}`}>
+                                            <div className={`w-12 md:w-16 rounded-t-lg transition-all duration-300 ${num === null ? 'h-0 opacity-0' : 'opacity-100'} ${highlightIndices.includes(idx) ? 'bg-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : sortedIndices.includes(idx) ? 'bg-green-400' : 'bg-slate-400'}`} style={{ height: num ? `${num * 2.5}px` : '0px' }} />
+                                            <button onClick={() => handleBlockClick(idx)} className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center text-xl font-bold rounded-xl border-4 transition-all ${num === null ? 'border-dashed border-slate-600 bg-transparent' : highlightIndices.includes(idx) ? 'bg-yellow-400 border-yellow-200 text-yellow-900 scale-110' : sortedIndices.includes(idx) ? 'bg-green-500 border-green-200 text-white' : 'bg-slate-100 border-slate-200 text-slate-700'}`}>
+                                                {num}
+                                            </button>
+                                            <span className="text-[10px] font-mono opacity-50">POS: {idx}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {algorithm === 'insertion' && (
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="text-xs font-bold uppercase tracking-widest opacity-40">暫存位置 (Hand)</div>
+                                        <div className={`w-16 h-16 flex items-center justify-center text-2xl font-bold rounded-2xl border-4 transition-all ${tempValue ? 'bg-orange-500 border-orange-200 text-white scale-125 shadow-2xl animate-pulse' : 'bg-slate-700/20 border-dashed border-slate-500 text-transparent'}`}>
+                                            {tempValue}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <button onClick={initGame} className="w-full py-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition-colors flex items-center justify-center gap-2">
+                            <Icon name="RefreshCw" size={20} /> 重置題目
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
